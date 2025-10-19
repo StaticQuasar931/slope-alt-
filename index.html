@@ -13,37 +13,22 @@
   <link rel="icon" href="https://res.cloudinary.com/dlq5fztla/image/upload/v1760301648/slope_Staticquasar931_stable_agqxto.png" />
   <meta property="og:image" content="https://res.cloudinary.com/dlq5fztla/image/upload/v1760301648/slope_Staticquasar931_stable_agqxto.png" />
 
-  <!-- Strict but practical CSP to hard block external scripts and calls (including id.net) while allowing local Unity + Cloudinary images -->
-  <meta http-equiv="Content-Security-Policy" content="
-    default-src 'self';
-    script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval';
-    connect-src 'self' blob: data:;
-    img-src 'self' https://res.cloudinary.com data:;
-    style-src 'self' 'unsafe-inline';
-    font-src 'self' data:;
-    media-src 'none';
-    frame-src 'none';
-    worker-src 'self' blob:;
-    base-uri 'self';
-    form-action 'self';
-  ">
+  <!-- CSP: relaxed just enough for Unity WebGL on GitHub Pages. The prior version was too strict. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: 'wasm-unsafe-eval'; connect-src 'self' blob: data:; img-src 'self' https://res.cloudinary.com data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; media-src 'self' blob: data:; worker-src 'self' blob:; base-uri 'self'; form-action 'self'">
 
-  <!-- Paranoid id.net blocker MUST run before any other script or Unity boot -->
+  <!-- Paranoid id.net blocker must run before any other script or Unity boot -->
   <script>
     (function () {
       try {
-        const IDNET_RX = /(^|\/\/)id\.net\/api\/user_data/i;
+        const IDNET = /(^|\/\/)id\.net\/api\/user_data/i;
 
         function isBadScript(node) {
-          if (!node || node.tagName !== 'SCRIPT') return false;
-          const src = String(node.src || '');
-          return IDNET_RX.test(src);
+          return node && node.tagName === 'SCRIPT' && IDNET.test(String(node.src || ''));
         }
-
-        function blockScript(node, reason) {
+        function blockScript(node, why) {
           try {
             if (isBadScript(node)) {
-              console.warn('[SQ] Blocked id.net script via', reason, node.src || '(inline)');
+              console.warn('[SQ] Blocked id.net script via', why, node.src || '(inline)');
               node.remove && node.remove();
               return true;
             }
@@ -61,7 +46,7 @@
         const rp = Node.prototype.replaceChild;
         Node.prototype.replaceChild = function (n, o) { if (blockScript(n, 'replaceChild')) return n; return rp.call(this, n, o); };
 
-        // Block setting src attribute on scripts
+        // Block setting script src by property or attribute
         try {
           const desc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
           if (desc && desc.set) {
@@ -70,21 +55,17 @@
               enumerable: desc.enumerable,
               get: desc.get,
               set: function (v) {
-                if (IDNET_RX.test(String(v || ''))) {
-                  console.warn('[SQ] Blocked id.net script src set', v);
-                  return;
-                }
+                if (IDNET.test(String(v || ''))) { console.warn('[SQ] Blocked id.net script src set', v); return; }
                 return desc.set.call(this, v);
               }
             });
           }
         } catch (e) {}
 
-        // Intercept setAttribute on any element setting a script src
         const sa = Element.prototype.setAttribute;
         Element.prototype.setAttribute = function (name, value) {
           try {
-            if (this.tagName === 'SCRIPT' && String(name).toLowerCase() === 'src' && IDNET_RX.test(String(value || ''))) {
+            if (this.tagName === 'SCRIPT' && String(name).toLowerCase() === 'src' && IDNET.test(String(value || ''))) {
               console.warn('[SQ] Blocked id.net via setAttribute', value);
               return;
             }
@@ -92,7 +73,7 @@
           return sa.call(this, name, value);
         };
 
-        // Scrub document.write / writeln injections
+        // Scrub document.write injections
         try {
           const W = document.write.bind(document);
           const WL = document.writeln.bind(document);
@@ -103,12 +84,12 @@
           document.writeln = html => WL(strip(html));
         } catch (e) {}
 
-        // Block fetch to id.net
+        // Block fetch and XHR to id.net
         const ofetch = window.fetch;
         window.fetch = function (input, init) {
           try {
             const url = typeof input === 'string' ? input : (input && input.url) || '';
-            if (IDNET_RX.test(String(url || ''))) {
+            if (IDNET.test(String(url || ''))) {
               console.warn('[SQ] Blocked id.net fetch', url);
               return Promise.resolve(new Response('{"status":"blocked"}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
             }
@@ -116,15 +97,14 @@
           return ofetch.apply(this, arguments);
         };
 
-        // Block XHR to id.net
         const oopen = XMLHttpRequest.prototype.open;
         const osend = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.open = function (method, url) {
-          this.__sq_block__ = IDNET_RX.test(String(url || ''));
+          this.__sq_block__ = IDNET.test(String(url || ''));
           this.__sq_url__ = url;
           return oopen.apply(this, arguments);
         };
-        XMLHttpRequest.prototype.send = function (body) {
+        XMLHttpRequest.prototype.send = function () {
           if (this.__sq_block__) {
             console.warn('[SQ] Blocked id.net XHR', this.__sq_url__);
             const self = this;
@@ -152,12 +132,10 @@
       --bg:#101218; --bg2:#0a0c12;
       --text:#eaf6ff; --muted:#b8d3ff;
       --shadow:0 8px 28px rgba(0,0,0,.45);
-      --green:#7aff8a;
     }
 
     html, body { height:100%; margin:0; background:linear-gradient(180deg,var(--bg),var(--bg2)); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; overflow:hidden; }
 
-    /* Game container */
     #gameContainer { position:fixed; inset:0; width:100vw; height:100vh; background:transparent; }
 
     /* Static Menu top left */
@@ -222,7 +200,10 @@
   </style>
 
   <!-- Local Unity runtime and helper scripts -->
-  <script src="UnityLoader.js"></script>
+  <script src="UnityLoader.js" crossorigin="anonymous"></script>
+  <!-- Include UnityProgress.js in case this build expects it internally -->
+  <script src="UnityProgress.js" defer></script>
+  <!-- Tips from repo -->
   <script src="tips.js" defer></script>
 </head>
 <body>
@@ -302,7 +283,7 @@
       window.__sq_stop_tip_cycle__ = () => clearInterval(id);
     })();
 
-    // Simple progress handler independent of UnityProgress.js
+    // Minimal progress handler independent of UnityProgress.js
     (function(){
       const cover = document.getElementById("loaderCover");
       const fill  = document.getElementById("loaderFill");
